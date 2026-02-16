@@ -1,0 +1,16 @@
+# --- Data Files to Ignore ---
+*.csv
+*.xls
+*.xlsx
+*.dat
+*.txt
+
+# --- Document Files to Ignore ---
+*.pdf
+*.docx
+*.pptx
+
+# --- System Files (Optional but Recommended) ---
+.DS_Store
+.Rhistory
+.RData
