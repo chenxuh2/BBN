@@ -211,4 +211,88 @@ full_model <- lm(`Percent Score` ~ `Goal_Assess and Align Expectations` +
 
 summary(full_model)
 
+# Lasso regression to check the items 
 
+# Step 1: Clean the Overall dataframe
+# We only want the ID and the Score (renamed to avoid confusion)
+overall_clean <- overall %>%
+  select(`Team ID`, Overall_Score = Score) %>% 
+  # Note: If 'overall' has multiple questions, filter for the specific one you want first:
+  # filter(`Question Text` == "Global Rating") %>%
+  distinct() # Removes duplicates if any
+
+# Step 2: Merge it into your main dataframe
+analysis_df <- df_clean %>%
+  left_join(overall_clean, by = "Team ID")
+
+# Now every row in 'analysis_df' has the specific item score AND the team's overall score
+head(analysis_df)
+
+library(janitor) # Helps clean column names
+
+# 1. Prepare Data (Convert to Numeric FIRST)
+lasso_data <- analysis_df %>%
+  # Select columns
+  select(`Team ID`, `Question Text`, Score, Overall_Score) %>%
+  
+  # --- THE FIX IS HERE ---
+  # Force Score to be a number. 
+  # If you have text like "N/A" or "-", this turns them into NA (which we fix later)
+  mutate(Score = as.numeric(Score)) %>%
+  
+  # Pivot to Wide
+  pivot_wider(
+    names_from = `Question Text`, 
+    values_from = Score,
+    values_fill = 0  # Now this works because 0 matches the numeric column
+  ) %>%
+  
+  # Clean names for safe math
+  clean_names() %>%
+  
+  # Remove rows missing the outcome variable
+  drop_na(overall_score)
+
+library(glmnet)
+
+# 1. Create the Predictor Matrix (X)
+# Exclude ID and Outcome columns. 
+# data.matrix() automatically handles the conversion to a numeric matrix.
+x <- data.matrix(lasso_data %>% select(-team_id, -overall_score))
+
+# 2. Create the Outcome Vector (Y)
+y <- lasso_data$overall_score
+y <- as.numeric(as.character(y))
+set.seed(123) # For reproducible results
+
+# Run Lasso (alpha = 1) with Cross-Validation
+cv_fit <- cv.glmnet(x, y, alpha = 1)
+
+# Plot the error curve
+plot(cv_fit)
+
+# 1. Get coefficients for the "1 Standard Error" model (Conservative/Stricter)
+coef_obj <- coef(cv_fit, s = "lambda.1se") 
+coef_obj <- coef(cv_fit, s = "lambda.min")
+# 2. Turn into a clean table of survivors
+active_items <- data.frame(
+  Item = rownames(coef_obj), 
+  Coefficient = as.numeric(coef_obj)
+) %>%
+  filter(Coefficient != 0) %>%       # Remove the deleted items
+  filter(Item != "(Intercept)") %>%  # Remove intercept
+  arrange(desc(abs(Coefficient)))    # Sort by impact
+
+# View the critical checklist items
+print(active_items)
+
+# 1. Get the names of the 9 items from your active_items list
+selected_vars <- active_items$Item
+
+# 2. Create the formula using the CORRECT column name (likely lowercase)
+# CHANGE "Overall_Score" to "overall_score"
+formula_str <- paste("overall_score ~", paste(selected_vars, collapse = " + "))
+
+# 3. Run the model again
+final_model <- lm(as.formula(formula_str), data = lasso_data)
+summary(final_model)
