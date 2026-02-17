@@ -296,3 +296,5 @@ formula_str <- paste("overall_score ~", paste(selected_vars, collapse = " + "))
 # 3. Run the model again
 final_model <- lm(as.formula(formula_str), data = lasso_data)
 summary(final_model)
+
+
