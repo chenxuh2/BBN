@@ -1,3 +1,5 @@
+import json
+from pydoc import text
 import pandas as pd
 import ollama
 import os
@@ -21,7 +23,7 @@ CHECKLIST_TEXT = """
 6. MED: Determined knowledge survivors possessed.
 7. MED: Provided appropriate opening statement (“warning shot”).
 8. MED: Accurately/succinctly chronicled events leading to death.
-9. MED: Used phrase “dead” or “died” (avoided euphemisms).
+9. MED: Used phrase 'dead' or 'died' (avoided euphemisms).
 10. MED: Avoided jargon or explained terms.
 11. MED: Paused to allow family to assimilate information.
 12. MED: Offered viewing of the deceased.
@@ -31,7 +33,7 @@ CHECKLIST_TEXT = """
 16. MED: Handled interruptions in non-disruptive manner.
 17. MED: Emotional response did not interfere with communication.
 18. MED: Involved me when discussing reason for visit.
-19. MED: Legitimized my emotions.
+19. MED: Legitimized patients emotions.
 20. MED: Reinforced positive behaviors.
 21. MED: Encouraged questions/concerns.
 22. MED: Elicited patient perspective of health situation.
@@ -73,39 +75,72 @@ def clean_llm_response(response_text):
         
     return item_name, is_death
 
-def classify_utterance(role, text):
-    # Skip non-students (Adjust based on your specific role names)
-    # Checks for 'Student', 'Candidate', 'Participant' to be safe
+def classify_row(role, text):
     if not any(x in role.upper() for x in ["STUDENT", "CANDIDATE", "PARTICIPANT"]):
-        return "N/A", "False"
+        return "N/A", False
 
+    # THE NEW "FEW-SHOT MULTI-LABEL" PROMPT
     prompt = f"""
-    You are a data extraction bot.
+    You are an expert medical simulation annotator.
     
-    CHECKLIST:
-    {CHECKLIST_TEXT}
-    
-    INSTRUCTION:
-    Map the utterance to the closest Checklist Item. 
-    Then determine if it is the "Death Announcement".
-    
-    STRICT OUTPUT FORMAT:
-    Item Name | True/False
-    
-    UTTERANCE: "{text}"
+    VALID CHECKLIST ITEMS:
+    {json.dumps(CHECKLIST_TEXT)}
+
+    TASK:
+    1. Identify ALL checklist items present in the student's utterance. 
+    2. Determine if this specific sentence is the explicit "Death Announcement".
+
+    RULES:
+    - You MUST return a JSON object with two keys: "items" (a list of strings) and "is_death" (boolean).
+    - If multiple actions happen, list them all.
+    - If NO actions happen, return an empty list [].
+    - ONLY use exact strings from the Valid Checklist Items.
+
+    EXAMPLES:
+    Utterance: "Hello, I am Student Doctor Smith. Are you Mrs. Jones? I'm afraid I have bad news."
+    Result: {{ "items": ["Introduced him/herself by name and role", "Addressed family member by name", "Provided appropriate opening statement"], "is_death": false }}
+
+    Utterance: "I am so sorry, but despite our best efforts, your husband has died."
+    Result: {{ "items": ["Used phrase 'dead” or “died” (avoided euphemisms)", "Legitimized patients emotions"], "is_death": true }}
+
+    Utterance: "Okay."
+    Result: {{ "items": [], "is_death": false }}
+
+    ---
+    ACTUAL UTTERANCE TO ANALYZE:
+    "{text}"
     """
 
     try:
-        response = ollama.chat(model=MODEL_NAME, messages=[
-            {'role': 'user', 'content': prompt},
-        ])
+        response = ollama.chat(
+            model="llama3", 
+            messages=[{'role': 'user', 'content': prompt}],
+            format="json",
+            options={"temperature": 0.0} # Keeps the model strictly logical
+        )
         
-        raw_answer = response['message']['content']
-        return clean_llm_response(raw_answer)
+        result = json.loads(response['message']['content'])
+        
+        # Extract the list of items
+        item_list = result.get("items", [])
+        
+        if not item_list:
+            final_items = "None"
+        elif isinstance(item_list, list):
+            # Use Regex to replace anything that is NOT a word (\w) or space (\s) with nothing
+            clean_list = [re.sub(r'[^\w\s]', '', item) for item in item_list]
+            
+            # Join the cleaned items with a comma and a space
+            final_items = ", ".join(clean_list)
+        else:
+            # Fallback
+            final_items = re.sub(r'[^\w\s]', '', str(item_list))
 
+        return final_items, result.get("is_death", False)
+    
     except Exception as e:
-        print(f"Error: {e}")
-        return "Error", "Error"
+        print(f"Error parsing row: {e}")
+    return "Error", False
     
 def process_annotations():
     if not os.path.exists(OUTPUT_FOLDER):
@@ -128,7 +163,7 @@ def process_annotations():
         
         # Use tqdm to show a progress bar because LLMs are slow
         for index, row in tqdm(df.iterrows(), total=df.shape[0]):
-            item, is_death = classify_utterance(row['Role'], row['Utterance'])
+            item, is_death = classify_row(row['Role'], row['Utterance'])
             predicted_items.append(item)
             death_flags.append(is_death)
             
