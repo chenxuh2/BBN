@@ -12,37 +12,6 @@ INPUT_FOLDER = "processed_csvs"
 OUTPUT_FOLDER = "annotated_data"
 MODEL_NAME = "llama3"  # Or "llama3:instruct" depending on your pull
 
-# PASTE YOUR FULL CHECKLIST HERE
-# The LLM needs this to know what options to pick from.
-CHECKLIST_TEXT = """
-1. MED: Addressed family member by name.
-2. MED: Introduced him/herself by name and role.
-3. MED: Clearly stated the name of the deceased family member.
-4. MED: Sat down. (Body language/Eye contact)
-5. MED: Ensured all important survivors were present.
-6. MED: Determined knowledge survivors possessed.
-7. MED: Provided appropriate opening statement (“warning shot”).
-8. MED: Accurately/succinctly chronicled events leading to death.
-9. MED: Used phrase 'dead' or 'died' (avoided euphemisms).
-10. MED: Avoided jargon or explained terms.
-11. MED: Paused to allow family to assimilate information.
-12. MED: Offered viewing of the deceased.
-13. MED: Established availability to answer questions.
-14. MED: Displayed professional attire/presence.
-15. MED: Responded to cues with appropriate touch.
-16. MED: Handled interruptions in non-disruptive manner.
-17. MED: Emotional response did not interfere with communication.
-18. MED: Involved me when discussing reason for visit.
-19. MED: Legitimized patients emotions.
-20. MED: Reinforced positive behaviors.
-21. MED: Encouraged questions/concerns.
-22. MED: Elicited patient perspective of health situation.
-23. MED: Conducted interaction in organized manner.
-24. MED: Summarized the interview.
-25. MED: Checked for accuracy during interview.
-26. MED: Reviewed next step(s).
-27. MED: Verified patient's understanding.
-"""
 # Use the taxonomy to make the annotation include goals  
 TAXONOMY = {
     "Goal 1: Establish a Supportive and Professional Environment": [
@@ -115,77 +84,66 @@ def clean_llm_response(response_text):
         
     return item_name, is_death
 
-def classify_row(role, text):
+def classify_context_row(prev2_role, prev2_text, prev1_role, prev1_text, current_role, current_text, next_role, next_text):
     allowed_roles = ["MEDICAL STUDENT", "SOCIAL WORKER"]
-    if not any(x in role.upper() for x in allowed_roles):
-        return "N/A", False
     
+    # If the current speaker isn't a student/SW, skip it
+    if not any(x in str(current_role).upper() for x in allowed_roles):
+        return "None", "None", False
 
-    # THE NEW "FEW-SHOT MULTI-LABEL" PROMPT
+    # If the text is empty, skip
+    if pd.isna(current_text) or str(current_text).strip() == "":
+        return "None", "None", False
+
     prompt = f"""
     You are an expert medical simulation annotator.
     
-    VALID CHECKLIST ITEMS:
-    {json.dumps(CHECKLIST_TEXT)}
+    TAXONOMY OF GOALS AND ACTIONS:
+    {json.dumps(TAXONOMY, indent=2)}
 
-    SPEAKER ROLE: {role}
-    UTTERANCE: "{text}"
+    CONVERSATION CONTEXT:
+    [2 Utterances Ago] {prev2_role}: "{prev2_text}"
+    [1 Utterance Ago] {prev1_role}: "{prev1_text}"
+    ---
+    [TARGET UTTERANCE TO ANALYZE] {current_role}: "{current_text}"
+    ---
+    [Next Utterance] {next_role}: "{next_text}"
 
     TASK:
-    1. Identify ALL checklist items present in this {role}'s utterance. 
-    2. Determine if this specific sentence is the explicit "Death Announcement".
-
-    RULES:
-    - You MUST return a JSON object with two keys: "items" (a list of strings) and "is_death" (boolean).
-    - If multiple actions happen, list them all.
-    - If NO actions happen, return an empty list [].
-    - ONLY use exact strings from the Valid Checklist Items.
-
-    EXAMPLES:
-    Utterance: "Hello, I am Student Doctor Smith. Are you Mrs. Jones? I'm afraid I have bad news."
-    Result: {{ "items": ["Introduced him/herself by name and role", "Addressed family member by name", "Provided appropriate opening statement"], "is_death": false }}
-
-    Utterance: "I am so sorry, but despite our best efforts, your husband has died."
-    Result: {{ "items": ["Used phrase 'dead” or “died” (avoided euphemisms)", "Legitimized patients emotions"], "is_death": true }}
-
-    Utterance: "Okay."
-    Result: {{ "items": [], "is_death": false }}
-
-    ---
-    ACTUAL UTTERANCE TO ANALYZE:
-    "{text}"
+    Analyze the TARGET UTTERANCE. Use the surrounding context to understand what the {current_role} is reacting to or prompting (e.g., if the target says "okay", look at what was just said).
+    1. Determine which specific Goal(s) the TARGET UTTERANCE is trying to achieve.
+    2. Determine which specific Action(s) the TARGET UTTERANCE is performing.
+    3. Check if the TARGET UTTERANCE is the explicit "Death Announcement". 
+       - Set to TRUE **ONLY IF** this specific utterance is the very first time the medical student explicitly breaks the news to the family that the patient has died.
+       - Set to FALSE if they are merely discussing the death after the news has already been delivered, answering follow-up questions, or summarizing.
+    
+    OUTPUT FORMAT: You MUST return a valid JSON object matching this exact structure:
+    {{
+        "goals": ["List matched goals here", "or empty list"],
+        "actions": ["List matched actions here", "or empty list"],
+        "is_death_announcement": true/false
+    }}
     """
 
     try:
         response = ollama.chat(
             model="llama3", 
             messages=[{'role': 'user', 'content': prompt}],
-            format="json",
-            options={"temperature": 0.0} # Keeps the model strictly logical
+            format="json", 
+            options={"temperature": 0.0}
         )
         
         result = json.loads(response['message']['content'])
         
-        # Extract the list of items
-        item_list = result.get("items", [])
+        goals = ", ".join(result.get("goals", [])) if result.get("goals") else "None"
+        actions = ", ".join(result.get("actions", [])) if result.get("actions") else "None"
+        is_death = result.get("is_death_announcement", False)
         
-        if not item_list:
-            final_items = "None"
-        elif isinstance(item_list, list):
-            # Use Regex to replace anything that is NOT a word (\w) or space (\s) with nothing
-            clean_list = [re.sub(r'[^\w\s]', '', item) for item in item_list]
-            
-            # Join the cleaned items with a comma and a space
-            final_items = ", ".join(clean_list)
-        else:
-            # Fallback
-            final_items = re.sub(r'[^\w\s]', '', str(item_list))
+        return goals, actions, is_death
 
-        return final_items, result.get("is_death", False)
-    
     except Exception as e:
         print(f"Error parsing row: {e}")
-    return "Error", False
+        return "Error", "Error", False
     
 def process_annotations():
     if not os.path.exists(OUTPUT_FOLDER):
@@ -202,24 +160,52 @@ def process_annotations():
         
         df = pd.read_csv(file_path)
         
-        # Create new columns
-        predicted_items = []
+        # --- NEW: CREATE CONTEXT WINDOW COLUMNS HERE ---
+        # We do this immediately after reading the CSV so the whole conversation is linked
+        df['prev_role_2'] = df['Role'].shift(2).fillna("None")
+        df['prev_text_2'] = df['Utterance'].shift(2).fillna("None")
+        
+        df['prev_role_1'] = df['Role'].shift(1).fillna("None")
+        df['prev_text_1'] = df['Utterance'].shift(1).fillna("None")
+        
+        df['next_role'] = df['Role'].shift(-1).fillna("None")
+        df['next_text'] = df['Utterance'].shift(-1).fillna("None")
+        # -----------------------------------------------
+        
+        # Create new lists for our updated outputs
+        goals_list = []
+        actions_list = []
         death_flags = []
         
         # Use tqdm to show a progress bar because LLMs are slow
         for index, row in tqdm(df.iterrows(), total=df.shape[0]):
-            item, is_death = classify_row(row['Role'], row['Utterance'])
-            predicted_items.append(item)
+            # Call the new context-aware function!
+            goals, actions, is_death = classify_context_row(
+                row['prev_role_2'], row['prev_text_2'],
+                row['prev_role_1'], row['prev_text_1'],
+                row['Role'], row['Utterance'],
+                row['next_role'], row['next_text']
+            )
+            goals_list.append(goals)
+            actions_list.append(actions)
             death_flags.append(is_death)
             
-        df['Predicted_Item'] = predicted_items
+        df['Annotated_Goals'] = goals_list
+        df['Annotated_Actions'] = actions_list
         df['Is_Death_Announcement'] = death_flags
+        
+        # --- NEW: CLEAN UP CONTEXT COLUMNS BEFORE SAVING ---
+        # This deletes the shifted columns so the final CSV doesn't look messy
+        df = df.drop(columns=[
+            'prev_role_2', 'prev_text_2', 
+            'prev_role_1', 'prev_text_1', 
+            'next_role', 'next_text'
+        ])
         
         # Save
         save_path = os.path.join(OUTPUT_FOLDER, f"ANNOTATED_{base_name}")
         df.to_csv(save_path, index=False)
         print(f"Saved to {save_path}")
-
 if __name__ == "__main__":
     # Ensure Ollama is running in the background!
     process_annotations()
