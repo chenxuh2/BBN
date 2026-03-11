@@ -32,7 +32,7 @@ TAXONOMY = {
     "Goal 3: Deliver the News": [
         "Provided appropriate opening statement (warning shot).",
         "Accurately/succinctly chronicled events leading to death.",
-        "Used phrase “dead” or “died” (avoided euphemisms).",
+        "Used phrase 'dead' or 'died' (avoided euphemisms).",
         "Avoided jargon or explained terms."
     ], 
     "Goal 4: Manage the Emotional Response": [
@@ -49,7 +49,7 @@ TAXONOMY = {
         "Summarized the interview.",
         "Checked for accuracy during interview.",
         "Reviewed next step(s).",
-        "Verified patient’s understanding."
+        "Verified patient's understanding."
     ]
 }
 
@@ -127,7 +127,8 @@ def classify_context_row(prev2_role, prev2_text, prev1_role, prev1_text, current
 
     try:
         response = ollama.chat(
-            model="llama3", 
+            # model="llama3", 
+            model="qwen2.5:14b",   # trying a different model for better contextual understanding 
             messages=[{'role': 'user', 'content': prompt}],
             format="json", 
             options={"temperature": 0.0}

@@ -7,12 +7,12 @@ import glob
 import re
 
 # --- CONFIGURATION ---
-INPUT_FOLDER = "processed_csvs" # Folder with your debrief transcripts
+INPUT_FOLDER = "processed_csvs" # Folder with debrief transcripts
 OUTPUT_FOLDER = "annotated_reflections"
 
 # Paste your taxonomy dictionary here
 TAXONOMY = {
-    # ... your goals and items ...
+    # ... goals and items ...
     # Example Taxonomy (Replace with your actual goals and items)
     "Goal 1: Establish a Supportive and Professional Environment": [
         "Addressed family member by name.",
@@ -51,7 +51,7 @@ TAXONOMY = {
         "Reviewed next step(s).",
         "Verified patient’s understanding."
     ] 
-    # ... add your other goals ...
+    # ... add other goals ...
 }
 
 

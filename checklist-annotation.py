@@ -43,46 +43,7 @@ CHECKLIST_TEXT = """
 26. MED: Reviewed next step(s).
 27. MED: Verified patient's understanding.
 """
-# Use the taxonomy to make the annotation include goals  
-TAXONOMY = {
-    "Goal 1: Establish a Supportive and Professional Environment": [
-        "Addressed family member by name.",
-        "Introduced him/herself by name and role.",
-        "Clearly stated the name of the deceased family member.",
-        "Sat down. (Body language/Eye contact)",
-        "Displayed professional attire/presence.", 
-        "Handled interruptions in non-disruptive manner.",
-        "Conducted interaction in organized manner."
-    ],
-    "Goal 2: Assess and Align Expectations": [
-        "Ensured all important survivors were present.",
-        "Determined knowledge survivors possessed.",
-        "Involved me when discussing reason for visit.",
-        "Elicited patient perspective of health situation."
-    ],
-    "Goal 3: Deliver the News": [
-        "Provided appropriate opening statement (warning shot).",
-        "Accurately/succinctly chronicled events leading to death.",
-        "Used phrase “dead” or “died” (avoided euphemisms).",
-        "Avoided jargon or explained terms."
-    ], 
-    "Goal 4: Manage the Emotional Response": [
-        "Paused to allow family to assimilate information.",
-        "Responded to cues with appropriate touch.",
-        "Emotional response did not interfere with communication.",
-        "Legitimized my emotions.",
-        "Reinforced positive behaviors."
-    ], 
-    "Goal 5: Ensure Understanding and Facilitate Closure": [
-        "Offered viewing of the deceased.",
-        "Established availability to answer questions.",
-        "Encouraged questions/concerns.",
-        "Summarized the interview.",
-        "Checked for accuracy during interview.",
-        "Reviewed next step(s).",
-        "Verified patient’s understanding."
-    ]
-}
+
 
 def clean_llm_response(response_text):
     """
@@ -116,7 +77,7 @@ def clean_llm_response(response_text):
     return item_name, is_death
 
 def classify_row(role, text):
-    allowed_roles = ["MEDICAL STUDENT", "SOCIAL WORKER"]
+    allowed_roles = ["MEDICAL STUDENT"]
     if not any(x in role.upper() for x in allowed_roles):
         return "N/A", False
     
