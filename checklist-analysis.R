@@ -389,7 +389,136 @@ graded_model <- lm(Overall_Rating ~ . - Team.ID, data = graded_regression_data)
 # 5. The Moment of Truth
 summary(graded_model)
 
+##-----------------------------------------##
+# Item-level bias
+##-----------------------------------------##
 
+# Create a mapping csv 
+# Extract the unique item names from both datasets
+#self_strings <- data.frame(Self_Item = unique(med_self_final$`Question Text`))
+#grader_strings <- data.frame(Grader_Item = unique(med_graded_final$`Question Text`))
+
+# Save them to your computer so you can copy/paste them into your mapping CSV
+#write.csv(self_strings, "self_strings_raw.csv", row.names = FALSE)
+#write.csv(grader_strings, "grader_strings_raw.csv", row.names = FALSE)
+
+
+# 1. Load your Crosswalk Table
+item_map <- read.csv("item_mapping.csv", stringsAsFactors = FALSE)
+
+# 2. Prepare Self scores AND translate the text using the map
+self_items <- med_self_final %>%
+  filter(Goal != "ALL", Include == TRUE, !is.na(Score)) %>%
+  mutate(Self_Score = as.numeric(Score) * 50) %>%
+  select(`Team ID`, `Question Text`, Self_Score) %>%
+  # Join the map to translate the Self item to the Grader item string
+  inner_join(item_map, by = c("Question Text" = "Self_Item"))
+
+# 3. Prepare Grader scores
+grader_items <- med_graded_final %>%
+  filter(Goal != "ALL", Include == TRUE, !is.na(Score)) %>%
+  mutate(Grader_Score = as.numeric(Score) * 50) %>%
+  select(`Team ID`, `Question Text`, Grader_Score)
+
+# 4. Join the datasets using the newly translated Grader_Item column
+item_bias_df <- inner_join(self_items, grader_items, 
+                           by = c("Team ID", "Grader_Item" = "Question Text")) %>%
+  mutate(Bias = Self_Score - Grader_Score)
+
+# 5. Run the Statistical Tests safely
+item_bias_stats <- item_bias_df %>%
+  group_by(Grader_Item) %>%
+  summarise(
+    Mean_Self = mean(Self_Score, na.rm = TRUE),
+    Mean_Grader = mean(Grader_Score, na.rm = TRUE),
+    Mean_Bias = mean(Bias, na.rm = TRUE),
+    
+    # SAFETY CHECK: Only run Wilcoxon if there is variance
+    P_Value = if(sd(Bias, na.rm = TRUE) > 0) {
+      wilcox.test(Self_Score, Grader_Score, paired = TRUE, exact = FALSE)$p.value
+    } else {
+      NA_real_
+    },
+    .groups = "drop"
+  ) %>%
+  # 6. Apply FDR correction
+  filter(!is.na(P_Value)) %>% 
+  mutate(
+    Adj_P_Value = p.adjust(P_Value, method = "fdr"),
+    Significance = ifelse(Adj_P_Value < 0.05, "Significant Bias", "Not Significant")
+  ) %>%
+  arrange(Adj_P_Value) 
+
+# Print the final item-level bias results
+print(head(item_bias_stats, 15))
+
+# Visualization 
+# Clean up the text so it doesn't run off the edge of the plot
+# This wraps the question text to a maximum of 45 characters per line
+library(stringr) # We use this to truncate the strings
+
+# 1. Truncate the text so it cuts off cleanly
+# This limits every item to exactly 35 characters, adding "..." to the end if needed.
+# You can change 'width = 35' to be shorter or longer depending on your plot window!
+plot_data <- item_bias_stats %>%
+  inner_join(item_map %>% select(Grader_Item, Factual), by = "Grader_Item") %>%
+  mutate(
+    Short_Item = str_trunc(Grader_Item, width = 35, side = "right"),
+    Item_Category = ifelse(Factual == TRUE, "Factual (Procedural)", "Subjective (Relational)")
+  ) %>%
+  # 2. Sort the data: First by Category, THEN by Bias score
+  arrange(Item_Category, Mean_Bias) %>%
+  # Lock in this exact order for the y-axis
+  mutate(Short_Item = factor(Short_Item, levels = unique(Short_Item)))
+
+# 3. Build the Unified Lollipop Chart
+unified_lollipop <- ggplot(plot_data, aes(x = Short_Item, y = Mean_Bias, color = Significance, shape = Item_Category)) +
+  # Draw the stick
+  geom_segment(aes(xend = Short_Item, yend = 0), linewidth = 1) +
+  # Draw the candy (size increased slightly to make shapes distinct)
+  geom_point(size = 4.5) +
+  # Draw the zero-line
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 1) +
+  coord_flip() +
+  
+  # Custom Colors for Significance
+  scale_color_manual(values = c("Significant Bias" = "#E46726", "Not Significant" = "gray75")) +
+  # Custom Shapes for Factual vs Subjective (17 = Triangle, 16 = Circle)
+  scale_shape_manual(values = c("Factual (Procedural)" = 17, "Subjective (Relational)" = 16)) +
+  
+  theme_minimal(base_size = 12) +
+  labs(
+    # title = "Metacognitive Calibration by Item Type",
+    # subtitle = "Triangles represent factual checklist items; Circles represent subjective evaluations",
+    x = NULL,
+    y = "Mean Bias (Self Score % - Grader Score %)",
+    color = "FDR Corrected Significance",
+    shape = "Item Type"
+  ) +
+  theme(
+    # Move legends to the right side to stack them cleanly
+    legend.position = "right",
+    axis.text.y = element_text(size = 9, color = "black"),
+    axis.text.x = element_text(size = 11, color = "black"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank() 
+  )
+
+# Display the plot
+print(unified_lollipop)
+
+# Save the plot as a high-resolution, publication-ready PNG
+ggsave(
+  filename = "Item_Level_Bias_Unified.png",
+  plot = unified_lollipop,
+  width = 10,        # Width in inches (good for a full-page width in a paper)
+  height = 8,        # Height in inches (gives the 27 items room to breathe)
+  units = "in",
+  dpi = 300,         # 300 DPI is the academic publishing standard
+  bg = "white"       # Forces a solid white background instead of transparent
+)
+
+cat("Successfully saved 'Item_Level_Bias_Unified.png' to your working directory!\n")
 ##-----------------------------------------##
 # Lasso regression to check the items 
 ##-----------------------------------------##
