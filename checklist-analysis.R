@@ -608,4 +608,52 @@ formula_str <- paste("overall_score ~", paste(selected_vars, collapse = " + "))
 final_model <- lm(as.formula(formula_str), data = lasso_data)
 summary(final_model)
 
+# Look at distribution
+grader_overall <- med_graded_final %>%
+  filter(Goal == "ALL") %>%
+  select(`Team ID`, Score) %>%
+  
+  # Filter out both true NAs and the literal string "N.A."
+  filter(!is.na(Score), Score != "N.A.") %>%
+  
+  mutate(
+    # Multiply by 20 to convert a 0-5 scale into a 0-100% scale
+    Score = as.numeric(Score) * 20, 
+    Rater = "Expert Grader (SP)"
+  )
 
+# 2. Build the Distribution Plot
+grader_dist_plot <- ggplot(grader_overall, aes(x = Score)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = 10, fill = "#E46726", color = "black", alpha = 0.7) +
+  geom_density(color = "black", linewidth = 1) +
+  theme_minimal(base_size = 14) +
+  
+  # Force the x-axis to show the full 0-100 range so it's easy to read
+  scale_x_continuous(limits = c(0, 100), breaks = seq(0, 100, by = 20)) +
+  
+  labs(
+    title = "Distribution of Overall Expert Evaluations",
+    subtitle = paste0("N = ", nrow(grader_overall), " (Missing values excluded)"),
+    x = "Overall Performance Score (%)",
+    y = "Density"
+  ) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+grader_dist_plot
+ggsave("BBN_Overall_Distribution.png", width = 7, height = 5, units = "in", dpi = 300)
+
+
+summary_stats <- grader_overall %>%
+  summarise(
+    Valid_N = n(),
+    Mean = mean(Score),
+    Median = median(Score),
+    Min = min(Score),
+    Max = max(Score),
+    SD = sd(Score)
+  )
+
+print(summary_stats)
