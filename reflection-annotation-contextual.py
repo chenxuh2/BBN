@@ -50,8 +50,10 @@ TAXONOMY = {
         "Checked for accuracy during interview.",
         "Reviewed next step(s).",
         "Verified patient's understanding."
-    ] 
-    # ... add other goals ...
+    ],
+    "Other": [
+        "Other"
+    ]
 }
 
 
@@ -76,34 +78,26 @@ def classify_reflection_context(prev2_role, prev2_text, prev1_role, prev1_text, 
     [Next Utterance] {next_role}: "{next_text}"
     
   
-    CRITICAL RULE - "DOING" VS "DISCUSSING" & INHERITING CONTEXT:
-    1. The clinical simulation is OVER. DO NOT annotate what the speaker is *doing* in the current room (e.g., saying "Let's sit down" in the debrief is not the clinical action "Sat down").
-    2. ONLY annotate which clinical actions they are *evaluating, recalling, or reflecting on* from the past simulation.
-    3. INHERITED REFLECTION: If the TARGET UTTERANCE is a generic statement of agreement (e.g., "I agree", "Yeah", "Exactly"), look at the immediate previous utterance. If the target is validating or agreeing with a peer's reflection on a specific Goal/Action, you MUST annotate the target utterance with that exact same Goal/Action.
-    4. STRICT VOCABULARY: 
-        - You MUST use the EXACT strings from the TAXONOMY provided above. 
-        - NEVER quote the transcript directly. E.g., if the speaker says "Super anxious", DO NOT put "Super anxious" in your JSON.
-    5. GOAL INHERITANCE: Every Action belongs to a specific Goal in the TAXONOMY. If you identify a specific Action, you MUST also include its parent Goal in the "reflected_goals" list, even if the speaker didn't name the Goal explicitly.
-
-    EXAMPLES:
-    - DISCUSSING (Annotate): "I felt like I rushed the warning shot." -> Maps to "Provided appropriate opening statement (warning shot)."
-    - INHERITED (Annotate): Target says "I agree completely." (Context: Peer just said "I forgot to introduce myself.") -> Maps to "Introduced him/herself by name and role."
-    - DOING/LOGISTICS (Ignore): Target says "Okay, I agree." (Context: Peer just said "Let's move on to the next question.") -> Return empty lists.
-
-    TASK:
-    Analyze the TARGET UTTERANCE using the surrounding context and the CRITICAL RULE.
-    1. Identify if the target speaker is **reflecting on, evaluating, or discussing** any of the Goals and Actions listed in the taxonomy.
-    2. If a Facilitator asks about a specific action (e.g., "Did you introduce yourself?"), and the target replies ("No, I missed that"), map the target's reply to the corresponding Goal/Action being discussed.
-    3. If they are just making small talk, managing the logistics of the room, or giving generic agreement, return empty lists.
+    CRITICAL RULES:
+    1. ONLY REFLECTIONS: You must only annotate utterances where the speaker is actively evaluating, recalling, or reflecting on clinical actions from the simulation.
+    2. IGNORE SMALL TALK (VERY IMPORTANT): If the target utterance is conversational filler ("yeah", "okay", "right", "um"), logistical room talk, or simple acknowledgement, you MUST return empty lists ([]). Do not force a mapping.
+    3. INHERIT CONTEXT: If the target utterance is a generic agreement ("I agree", "exactly") AND the immediate previous utterance was a specific reflection, inherit the previous utterance's Goal and Action.
+    
+    *** 4. TOP-DOWN CLASSIFICATION (GOAL FIRST, THEN ACTION) ***
+    You MUST classify the utterance by determining the broad GOAL first, and then selecting the specific ACTION.
+    - Step 1: Which of the 5 Goals (or "Other") does this reflection fall under? Put this in "reflected_goals".
+    - Step 2: Look ONLY at the Actions listed under that specific Goal in the TAXONOMY. Which Action matches best? Put this in "reflected_actions".
+    
+    *** 5. THE TWO WAYS TO USE "OTHER" ***
+    If the speaker reflects on a clinical/emotional action that is not explicitly in the taxonomy, you must use "Other" and write a 3-7 word summary in "other_summary".
+    - Scenario A (Goal matches, Action doesn't): If it fits a Goal but isn't on the checklist (e.g., handing the patient a tissue), output Goal: "Goal 4...", Action: "Other".
+    - Scenario B (Nothing matches): If it is completely outside the 5 Goals (e.g., internal anxiety, running out of time), output Goal: "Other", Action: "Other".
 
     OUTPUT FORMAT (Strict JSON):
-    You must strictly separate the overarching Goals from the specific Actions based on the TAXONOMY provided.
-    - "reflected_goals" MUST ONLY contain the top-level categories that start with the word "Goal" (e.g., "Goal 3: Deliver the News").
-    - "reflected_actions" MUST ONLY contain the specific bulleted items (e.g., "Used phrase 'dead' or 'died'"). DO NOT put items starting with "Goal" in this list.
-    
     {{ 
         "reflected_goals": ["List of Goal names here"],
         "reflected_actions": ["List of specific Action names here"]
+        "other_summary": "Concise summary if 'Other' is used, otherwise empty string"
     }}
     """
 
@@ -121,11 +115,26 @@ def classify_reflection_context(prev2_role, prev2_text, prev1_role, prev1_text, 
         goals = result.get("reflected_goals", [])
         actions = result.get("reflected_actions", [])
         
-        # Clean out punctuation and join into a comma-separated string
+        # --- NEW CODE ADDED HERE FOR OTHER SUMMARY ---
+        other_summary = result.get("other_summary", "") 
+        
+        # Clean out punctuation and join into a comma-separated string for taxonomy items
         clean_goals = ", ".join([re.sub(r'[^\w\s]', '', g) for g in goals]) if goals else "None"
         clean_actions = ", ".join([re.sub(r'[^\w\s]', '', a) for a in actions]) if actions else "None"
         
-        return clean_goals, clean_actions
+        # Handle the Other summary
+        clean_summary = str(other_summary).strip() if other_summary else "None"
+        
+        # Fallback safety: Wipe rogue summaries if the category isn't Other
+        if ("Other" not in clean_goals and "Other" not in clean_actions) and clean_summary != "None":
+            clean_summary = "None" 
+            
+        # Fallback safety: Provide a generic summary if it forgot to write one
+        if ("Other" in clean_goals or "Other" in clean_actions) and clean_summary == "None":
+            clean_summary = "Unspecified other reflection" 
+
+        # Now returning THREE variables instead of two
+        return clean_goals, clean_actions, clean_summary
 
     except Exception as e:
         print(f"Error parsing row: {e}")
@@ -165,11 +174,13 @@ def process_reflections():
         df['next_text'] = df['Utterance'].shift(-1).fillna("None")
         # ---------------------------------
 
-        goals_list, actions_list = [], []
+        # --- MODIFIED: Added summary_list ---
+        goals_list, actions_list, summary_list = [], [], [] 
         
         for index, row in tqdm(df.iterrows(), total=df.shape[0]):
-            # Pass the context window into the function
-            goals, actions = classify_reflection_context(
+            
+            # --- MODIFIED: Unpacking 3 variables ---
+            goals, actions, summary = classify_reflection_context(
                 row['prev_role_2'], row['prev_text_2'],
                 row['prev_role_1'], row['prev_text_1'],
                 row['Role'], row['Utterance'],
@@ -178,9 +189,14 @@ def process_reflections():
             goals_list.append(goals)
             actions_list.append(actions)
             
+            # --- MODIFIED: Appending the summary ---
+            summary_list.append(summary) 
+            
         df['Reflected_Goals'] = goals_list
         df['Reflected_Actions'] = actions_list
         
+        # --- MODIFIED: Creating the new dataframe column ---
+        df['Other_Summary'] = summary_list
         # --- CLEAN UP CONTEXT COLUMNS BEFORE SAVING ---
         df = df.drop(columns=[
             'prev_role_2', 'prev_text_2', 
