@@ -1,16 +1,17 @@
-Markdown
 # BBN Simulation & Reflection Auto-Annotator
 
 This repository contains Python scripts designed to process and auto-annotate qualitative transcripts from Breaking Bad News (BBN) simulation and reflection/debriefing sessions. It uses an LLM (via Ollama) to categorize utterances against a predefined taxonomy of goals and actions.
+
+Current workflow note: **process the SRT files first**. The annotation scripts are not yet fully updated for the new SRT split workflow; they will need to be updated before the next full annotation run.
 
 ## 📋 Table of Contents
 1. [Prerequisites & Setup](#-prerequisites--setup)
 2. [Data Preparation](#-data-preparation)
 3. [Script Overview](#-script-overview)
 4. [How to Run](#-how-to-run)
-    - [Step 1: Process Transcripts](#step-1-process-transcripts)
+    - [Step 1: Process SRT Files First](#step-1-process-srt-files-first)
     - [Step 2: Annotate Simulations](#step-2-annotate-simulations)
-    - [Step 3: Annotate Reflections](#step-3-annotate-reflections)
+    - [Step 3: Annotate Debriefing / Reflections](#step-3-annotate-debriefing--reflections)
 5. [Understanding the Output](#-understanding-the-output)
 
 ---
@@ -44,11 +45,14 @@ Create the following folder structure in the root directory:
 ```text
 BBN-local/
 │
-├── input_data/               <-- 1. DROP RAW FILES HERE
-├── processed_csvs/           <-- 2. Cleaned files will appear here
-├── annotated_data/           <-- 3. Final simulation outputs will appear here
-├── annotated_reflections/    <-- 4. Final reflection outputs will appear here
+├── srt_data/                 <-- 1. Drop raw .srt files here
+├── processed_srt_to_csvs/    <-- 2. Full uncut SRT-to-CSV files appear here
+├── srt_to_csv_simulation/    <-- 3. Simulation + transition CSVs appear here
+├── srt_csv_debriefing/       <-- 4. Debriefing CSVs appear here
+├── annotated_data/           <-- 5. Final simulation annotation outputs appear here
+├── annotated_reflections/    <-- 6. Final reflection outputs appear here
 │
+├── srt-processor.py
 ├── checklist-annotation-contextual.py
 ├── reflection-annotation-contextual.py
 ├── transcript_processor.py
@@ -56,21 +60,58 @@ BBN-local/
 ```
 
 ## 💻 Script Overview
+srt-processor.py: Converts raw `.srt` files into CSV files. It also splits each transcript into simulation+transition and debriefing portions using a rule-based debriefing-start detector.
+
 transcript_processor.py: Cleans and prepares raw transcripts for analysis.
 
-checklist-annotation-contextual.py: Analyzes Simulation transcripts. It looks strictly at MED STUDENT roles and maps their direct actions to the 27-item medical checklist (e.g., "Provided warning shot"), corresponding goals, and flags if the utterance is a Death Announcement.
+checklist-annotation-contextual.py: Analyzes Simulation transcripts. It looks strictly at MED STUDENT roles and maps their direct actions to the 27-item medical checklist (e.g., "Provided warning shot"), corresponding goals, and flags if the utterance is a Death Announcement. **Needs update for the new SRT split workflow.**
 
-reflection-annotation-contextual.py: Analyzes Reflection/Debrief transcripts. It looks at all non-empty utterances across any role and maps the discussion against the higher-level taxonomy of Goals and Actions (e.g., "Reflecting on Goal 2: Delivery of Bad News").
+reflection-annotation-contextual.py: Analyzes Reflection/Debrief transcripts. It looks at all non-empty utterances across any role and maps the discussion against the higher-level taxonomy of Goals and Actions (e.g., "Reflecting on Goal 2: Delivery of Bad News"). **Needs update for the new SRT split workflow.**
 
 ## 🚀 How to Run
-### Step 1: Process Transcripts
-(If your transcripts are already cleaned and formatted as described above, you can skip this step).
-Run the transcript_processor.py to prepare data. 
+### Step 1: Process SRT Files First
+Place raw `.srt` files in:
+
+```text
+srt_data/
+```
+
+Then run:
+
+```bash
+python srt-processor.py
+```
+
+This creates three CSV outputs for each SRT file:
+
+```text
+processed_srt_to_csvs/<original_name>_full_uncut.csv
+srt_to_csv_simulation/<original_name>_simulation_transition_cut.csv
+srt_csv_debriefing/<original_name>_debriefing_cut.csv
+```
+
+The split is approximate. The simulation output includes the transition period before debriefing. The debriefing start is detected using timing, phrase cues, and a look-ahead context window.
 
 ### Step 2: Annotate Simulations
-Ensure your processed simulation CSVs are in the folder specified by the script (default: processed_csvs).
+Status: **needs update**. Planned for next week.
 
-checklist-annotation-contextual.py
+The simulation annotation scripts should be updated to read from:
+
+```text
+srt_to_csv_simulation/
+```
+
+The expected input files are:
+
+```text
+*_simulation_transition_cut.csv
+```
+
+Current script:
+
+```bash
+python checklist-annotation-contextual.py
+```
 
 What this does: 
 1. Filters for the MEDICAL STUDENT role.
@@ -78,11 +119,26 @@ What this does:
 3. Context: Uses the surrounding utterances (2 previous, 1 next).
 4. Outputs new files prefixed with ANNOTATED_ in the designated output folder.
 
-## Step 3: Annotate Reflections
-Ensure your processed debrief CSVs are in the folder specified by the script (default: reflection_csvs).
+### Step 3: Annotate Debriefing / Reflections
+Status: **needs update**. Planned for next week.
 
-Bash
+The reflection/debriefing annotation scripts should be updated to read from:
+
+```text
+srt_csv_debriefing/
+```
+
+The expected input files are:
+
+```text
+*_debriefing_cut.csv
+```
+
+Current script:
+
+```bash
 python reflection-annotation-contextual.py
+```
 
 What this does:
 1. Evaluates all valid, non-empty utterances.
@@ -110,4 +166,4 @@ Reflected_Actions: A comma-separated string of the specific checklist actions be
 ---
 
 ### Next Steps
-TBD
+Update the annotation scripts so they read from the new SRT split folders and write outputs using the current naming convention.
