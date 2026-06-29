@@ -116,3 +116,53 @@ python reflection-annotation-contextual.py
 
 Check and edit each script's `INPUT_FOLDER` and `OUTPUT_FOLDER` constants before
 running annotation.
+
+## To Do
+
+### Cut QC
+
+Use the `split_confidence_report.csv` file to audit cut quality before any
+downstream annotation. Prioritize all files with `status=error`,
+`confidence=0`, or `confidence=1`, because these cuts were made with weak or no
+language evidence. Then review a stratified subset of higher-confidence cuts:
+about 15-20 files with `confidence=5` and 8-10 files with `confidence=10`. For
+each reviewed file, inspect roughly two minutes before and after the cut and
+label the cut as `correct`, `too early`, `too late`, or `unclear`.
+
+For the current dataset size, a first-pass QC target of about 35 sessions is a
+reasonable minimum. This is large enough to cover all weak cuts plus a sample of
+apparently strong cuts, while still being feasible for manual review.
+
+### Potential LLM Checklist Auto-Assessment
+
+It is worth testing whether an LLM can identify observable Breaking Bad News
+checklist evidence from the simulation transcript. Treat this as
+transcript-based evidence detection, not as a replacement for medical student
+self-assessment. Recommended labels are `present`, `no evidence`, and
+`not observable from transcript`, because some checklist items involve
+non-verbal behavior that may not be visible in text.
+
+This could support a useful comparison between student self-rating, human-coded
+transcript evidence, and LLM-coded transcript evidence.
+
+### Debriefing LLM Annotation Workflow
+
+Split data by session rather than by utterance, so that language from the same
+debriefing session does not leak across development and validation.
+
+- Prompt/codebook development: 12-15 sessions. This is enough to expose common
+  debriefing patterns and refine the prompt without using too much of the
+  dataset for tuning.
+- Locked validation set: 20-25 sessions. This gives a stable estimate of model
+  performance across sessions and should not be used for prompt revision after
+  it is locked.
+- LLM production set: all remaining sessions. Run the locked prompt on these
+  only after validation performance is acceptable.
+- Post-hoc audit: at least 10% of the production set, plus all `Other`,
+  uncertain, malformed, or error outputs. This keeps quality control focused on
+  the highest-risk cases.
+
+For a CHI/IUI-level analysis, use human annotation on the validation set and
+report agreement against the LLM. A practical target is goal-level macro F1 of
+at least 0.80 and action-level macro F1 of about 0.70-0.75 for common labels,
+with rare labels and `Other` reported separately.

@@ -106,6 +106,69 @@ def find_debriefing_start_index(df):
     return len(working_df) - 1, "end_fallback", 0
 
 
+# --- REVIEW TRIAGE ---
+def assign_review_flags(report_rows):
+    """Tags each report row with 'needs_review' (yes/no) and 'review_reason'.
+
+    Only force a review on genuinely low-confidence splits (the fallbacks,
+    failures, and broken/empty debriefings); everything the splitter matched
+    by phrase is trusted and left to its confidence rating.
+    """
+    for row in report_rows:
+        reason = row.get("split_reason", "")
+        deb_rows = row.get("debriefing_rows")
+
+        # 1. Failures and the no-evidence fallbacks (confidence 0/1).
+        if reason in ("error", "empty_file", "duration_fallback", "end_fallback"):
+            row["needs_review"] = "yes"
+            row["review_reason"] = f"low_confidence:{reason}"
+            continue
+
+        # 2. Phrase matched but produced an empty/near-empty debriefing -> likely broken.
+        if isinstance(deb_rows, int) and deb_rows <= 1:
+            row["needs_review"] = "yes"
+            row["review_reason"] = "empty_debriefing"
+            continue
+
+        # Otherwise it's a confident phrase-based split; rely on its confidence rating.
+        row["needs_review"] = "no"
+        row["review_reason"] = ""
+
+
+# --- REVIEW CONTEXT ---
+CONTEXT_BEFORE = 3   # simulation rows to show before the cut
+CONTEXT_AFTER = 5    # debriefing rows to show after the cut sentence
+REVIEW_CONTEXT_PATH = os.path.join(OUTPUT_FOLDER, "split_review_context.csv")
+
+
+def build_context_rows(df, split_idx, base_name, reason, confidence):
+    """Builds a long-format window of rows around the cut for quick eyeballing.
+
+    The cut row (split_idx) is the FIRST debriefing row; rows before it are the
+    tail of the simulation. One dict per row, ready to stack across all files.
+    """
+    rows = []
+    start = max(0, split_idx - CONTEXT_BEFORE)
+    end = min(len(df), split_idx + CONTEXT_AFTER + 1)  # +1 to include the cut row itself
+    for i in range(start, end):
+        r = df.iloc[i]
+        offset = i - split_idx  # <0 simulation, 0 = cut row, >0 debriefing
+        rows.append({
+            "file_name": f"{base_name}.csv",
+            "needs_review": "",   # stamped in after triage
+            "review_reason": "",  # stamped in after triage
+            "split_reason": reason,
+            "confidence": confidence,
+            "marker": ">>> CUT" if offset == 0 else "",
+            "phase": "SIMULATION" if offset < 0 else "DEBRIEFING",
+            "offset": offset,
+            "start time": r.get("start time", ""),
+            "end time": r.get("end time", ""),
+            "text": r.get("text", ""),
+        })
+    return rows
+
+
 def split_and_save_csv(file_path):
     """Splits one CSV into simulation and debriefing files."""
     df = pd.read_csv(file_path)
@@ -120,8 +183,9 @@ def split_and_save_csv(file_path):
 
     print(f"{base_name}: {reason}, confidence={confidence}")
 
+    context_rows = build_context_rows(df, split_idx, base_name, reason, confidence)
     split_row = df.iloc[split_idx] if not df.empty and split_idx < len(df) else None
-    return {
+    report_row = {
         "file_name": os.path.basename(file_path),
         "input_path": file_path,
         "total_rows": len(df),
@@ -138,6 +202,7 @@ def split_and_save_csv(file_path):
         "status": "processed",
         "error": "",
     }
+    return report_row, context_rows
 
 
 def process_files():
@@ -149,10 +214,13 @@ def process_files():
     print(f"Found {len(files)} CSV files.")
 
     report_rows = []
+    context_rows = []
 
     for file_path in files:
         try:
-            report_rows.append(split_and_save_csv(file_path))
+            report_row, ctx = split_and_save_csv(file_path)
+            report_rows.append(report_row)
+            context_rows.extend(ctx)
         except Exception as exc:
             print(f"{os.path.basename(file_path)}: error={exc}")
             report_rows.append({
@@ -173,8 +241,32 @@ def process_files():
                 "error": str(exc),
             })
 
+    # Tag which files a human should manually re-check.
+    assign_review_flags(report_rows)
+    to_review = sum(1 for r in report_rows if r.get("needs_review") == "yes")
+
+    # Stamp each file's review flag onto its context rows so the long-format
+    # CSV can be filtered/sorted by needs_review while browsing.
+    review_map = {
+        r["file_name"]: (r.get("needs_review", ""), r.get("review_reason", ""))
+        for r in report_rows
+    }
+    for c in context_rows:
+        c["needs_review"], c["review_reason"] = review_map.get(c["file_name"], ("", ""))
+
     pd.DataFrame(report_rows).to_csv(CONFIDENCE_REPORT_PATH, index=False)
     print(f"Saved confidence report: {CONFIDENCE_REPORT_PATH}")
+    pd.DataFrame(context_rows).to_csv(REVIEW_CONTEXT_PATH, index=False)
+    print(f"Saved review context: {REVIEW_CONTEXT_PATH}")
+    print(f"Flagged {to_review}/{len(report_rows)} files for manual review.")
+
+    # Breakdown of why files were flagged, so the triage stays transparent.
+    breakdown = {}
+    for r in report_rows:
+        if r.get("needs_review") == "yes":
+            breakdown[r["review_reason"]] = breakdown.get(r["review_reason"], 0) + 1
+    for review_reason, count in sorted(breakdown.items(), key=lambda kv: -kv[1]):
+        print(f"   {count:>4}  {review_reason}")
 
 
 if __name__ == "__main__":
