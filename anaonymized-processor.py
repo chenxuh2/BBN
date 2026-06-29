@@ -140,6 +140,55 @@ CONTEXT_BEFORE = 3   # simulation rows to show before the cut
 CONTEXT_AFTER = 5    # debriefing rows to show after the cut sentence
 REVIEW_CONTEXT_PATH = os.path.join(OUTPUT_FOLDER, "split_review_context.csv")
 
+# Human-corrected cut points. CSV columns: file_name, and ONE of
+#   split_index       -> the row_index (from split_review_context.csv), OR
+#   split_start_time  -> the 'start time' of the first debriefing row,
+#                        read straight off the original input CSV.
+# Use split_start_time when the correct cut is far from the heuristic's guess
+# and therefore not visible in the context window.
+MANUAL_OVERRIDES_PATH = os.path.join(OUTPUT_FOLDER, "manual_overrides.csv")
+
+
+def load_manual_overrides():
+    """Reads file_name -> {split_index, split_start_time} from the overrides CSV."""
+    if not os.path.exists(MANUAL_OVERRIDES_PATH):
+        return {}
+    overrides = {}
+    df = pd.read_csv(MANUAL_OVERRIDES_PATH, dtype=str).fillna("")
+    for _, r in df.iterrows():
+        name = str(r.get("file_name", "")).strip()
+        if not name:
+            continue
+        overrides[name] = {
+            "split_index": str(r.get("split_index", "")).strip(),
+            "split_start_time": str(r.get("split_start_time", "")).strip(),
+        }
+    return overrides
+
+
+def resolve_override_index(df, override):
+    """Turns a manual override into a row index, or None if it can't be applied.
+
+    Prefers an explicit row index; otherwise matches the given start time
+    (exact string first, then the first row at/after that time).
+    """
+    if override.get("split_index"):
+        return max(0, min(int(float(override["split_index"])), len(df)))
+
+    target = override.get("split_start_time", "")
+    if target and "start time" in df.columns:
+        exact = df.index[df["start time"].astype(str).str.strip() == target]
+        if len(exact):
+            return int(exact[0])
+        # Fall back to the first row whose start time is at/after the target.
+        target_seconds = time_to_seconds(target)
+        seconds = df["start time"].apply(time_to_seconds)
+        at_or_after = df.index[seconds >= target_seconds]
+        if len(at_or_after):
+            return int(at_or_after[0])
+
+    return None  # unusable override -> caller falls back to the heuristic
+
 
 def build_context_rows(df, split_idx, base_name, reason, confidence):
     """Builds a long-format window of rows around the cut for quick eyeballing.
@@ -162,6 +211,8 @@ def build_context_rows(df, split_idx, base_name, reason, confidence):
             "marker": ">>> CUT" if offset == 0 else "",
             "phase": "SIMULATION" if offset < 0 else "DEBRIEFING",
             "offset": offset,
+            "row_index": i,  # put this number into manual_overrides.csv to force the cut here
+
             "start time": r.get("start time", ""),
             "end time": r.get("end time", ""),
             "text": r.get("text", ""),
@@ -169,10 +220,18 @@ def build_context_rows(df, split_idx, base_name, reason, confidence):
     return rows
 
 
-def split_and_save_csv(file_path):
+def split_and_save_csv(file_path, overrides=None):
     """Splits one CSV into simulation and debriefing files."""
     df = pd.read_csv(file_path)
-    split_idx, reason, confidence = find_debriefing_start_index(df)
+
+    # A human-supplied cut wins over the heuristic (by row index or start time);
+    # if it can't be resolved, fall back to the heuristic.
+    name = os.path.basename(file_path)
+    override_idx = resolve_override_index(df, overrides[name]) if overrides and name in overrides else None
+    if override_idx is not None:
+        split_idx, reason, confidence = override_idx, "manual_override", 10
+    else:
+        split_idx, reason, confidence = find_debriefing_start_index(df)
 
     base_name = os.path.splitext(os.path.basename(file_path))[0]
     simulation_path = os.path.join(SIMULATION_FOLDER, f"{base_name}_SIMULATION.csv")
@@ -213,12 +272,16 @@ def process_files():
     files = glob.glob(os.path.join(INPUT_FOLDER, "*.csv"))
     print(f"Found {len(files)} CSV files.")
 
+    overrides = load_manual_overrides()
+    if overrides:
+        print(f"Loaded {len(overrides)} manual override(s).")
+
     report_rows = []
     context_rows = []
 
     for file_path in files:
         try:
-            report_row, ctx = split_and_save_csv(file_path)
+            report_row, ctx = split_and_save_csv(file_path, overrides)
             report_rows.append(report_row)
             context_rows.extend(ctx)
         except Exception as exc:

@@ -93,6 +93,77 @@ Confidence scores are heuristic quality flags, not probabilities:
 - `1`: duration fallback only; manually review these
 - `0`: empty file or last-row fallback; manually review these first
 
+## Manual Cut Overrides
+
+When QC shows a cut is wrong, do **not** edit the simulation/debriefing output
+files directly — they are regenerated (and overwritten) every run. Instead,
+record the correct cut in an overrides file, which the processor applies on each
+run:
+
+```text
+processed_anonymized_csvs/manual_overrides.csv
+```
+
+This file is **optional**. If it is missing, or contains only the header row,
+the processor runs entirely on the heuristic and nothing changes. It is never
+created or written by the processor — it is yours to fill in. An empty template
+with just the header is provided so you can start filling it whenever you find a
+bad cut.
+
+The file has three columns. Always set `file_name`; then fill in **exactly one**
+of the other two columns:
+
+```text
+file_name,split_index,split_start_time
+case_017.csv,142,
+case_039.csv,,21:30
+```
+
+- `split_index`: the row index of the first debriefing row. Copy it from the
+  `row_index` column of `split_review_context.csv`. Use this when the correct
+  cut is visible in the context window.
+- `split_start_time`: the `start time` value of the first debriefing row, read
+  straight from the original input CSV. Use this when the cut is badly off and
+  the correct row is **not** inside the context window, so no `row_index` is
+  available to copy.
+
+For each listed file, the processor uses your cut instead of the heuristic and
+records it with `split_reason=manual_override` and `confidence=10`. Resolution
+order: an explicit `split_index` wins; otherwise the row whose `start time`
+exactly matches `split_start_time`; otherwise the first row at or after that
+time. If neither column can be resolved, the file falls back to the heuristic.
+
+### About the index number
+
+`split_index` is a **pandas row index**: zero-based and counted over data rows
+only, with the header row excluded. It is **not** the Excel row number. In Excel
+the header occupies row 1, so a pandas index of `i` appears on Excel row `i + 2`
+(e.g. `split_index=142` is Excel row 144). You should not count rows by hand —
+just copy the `row_index` value from `split_review_context.csv`, which already
+holds the correct number.
+
+The cut is always made at a row boundary: rows `[0, split_index)` become the
+simulation file and rows `[split_index, end]` become the debriefing file, so the
+row at `split_index` is the **first** debriefing row.
+
+## Review Context File
+
+Alongside the confidence report, the processor writes a long-format file for
+eyeballing each cut without opening the full transcripts:
+
+```text
+processed_anonymized_csvs/split_review_context.csv
+```
+
+For every input file it stacks a small window of rows around the cut: the last
+3 simulation rows, the cut row, and the first 5 debriefing rows. The cut row is
+marked `>>> CUT` in the `marker` column and is the intended first line of
+debriefing — confirm it reads like the start of debriefing. Each row also
+carries `needs_review`, `confidence`, `phase` (SIMULATION/DEBRIEFING), `offset`
+(negative before the cut, `0` at the cut), and `row_index` for use in overrides.
+Window sizes are controlled by `CONTEXT_BEFORE` and `CONTEXT_AFTER` in the
+script.
+
 ## LLM Annotation Setup
 
 The annotation scripts use Ollama for local LLM calls.
