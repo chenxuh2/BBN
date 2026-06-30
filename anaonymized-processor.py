@@ -141,7 +141,7 @@ CONTEXT_AFTER = 5    # debriefing rows to show after the cut sentence
 REVIEW_CONTEXT_PATH = os.path.join(OUTPUT_FOLDER, "split_review_context.csv")
 
 # Human-corrected cut points. CSV columns: file_name, and ONE of
-#   split_index       -> the row_index (from split_review_context.csv), OR
+#   row_index         -> the row_index (copied from split_review_context.csv), OR
 #   split_start_time  -> the 'start time' of the first debriefing row,
 #                        read straight off the original input CSV.
 # Use split_start_time when the correct cut is far from the heuristic's guess
@@ -150,7 +150,7 @@ MANUAL_OVERRIDES_PATH = os.path.join(OUTPUT_FOLDER, "manual_overrides.csv")
 
 
 def load_manual_overrides():
-    """Reads file_name -> {split_index, split_start_time} from the overrides CSV."""
+    """Reads file_name -> {row_index, split_start_time} from the overrides CSV."""
     if not os.path.exists(MANUAL_OVERRIDES_PATH):
         return {}
     overrides = {}
@@ -160,7 +160,7 @@ def load_manual_overrides():
         if not name:
             continue
         overrides[name] = {
-            "split_index": str(r.get("split_index", "")).strip(),
+            "row_index": str(r.get("row_index", "")).strip(),
             "split_start_time": str(r.get("split_start_time", "")).strip(),
         }
     return overrides
@@ -172,8 +172,8 @@ def resolve_override_index(df, override):
     Prefers an explicit row index; otherwise matches the given start time
     (exact string first, then the first row at/after that time).
     """
-    if override.get("split_index"):
-        return max(0, min(int(float(override["split_index"])), len(df)))
+    if override.get("row_index"):
+        return max(0, min(int(float(override["row_index"])), len(df)))
 
     target = override.get("split_start_time", "")
     if target and "start time" in df.columns:
