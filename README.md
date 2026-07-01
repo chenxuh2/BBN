@@ -12,6 +12,8 @@ folders on your machine.
 
 - `anaonymized-processor.py`: splits anonymized full-session CSV files into
   simulation and debriefing CSVs.
+- `split_set.py`: randomly assigns debriefing sessions to the development,
+  validation, and production sets and copies the files into per-set folders.
 - `transcript_processor.py`: converts raw transcript text files into cleaned CSV
   files.
 - `checklist-annotation-contextual.py`: annotates simulation utterances against
@@ -169,6 +171,44 @@ carries `needs_review`, `confidence`, `phase` (SIMULATION/DEBRIEFING), `offset`
 (negative before the cut, `0` at the cut), and `row_index` for use in overrides.
 Window sizes are controlled by `CONTEXT_BEFORE` and `CONTEXT_AFTER` in the
 script.
+
+## Splitting Sessions Into Sets
+
+Once the debriefing files are cut (and any manual overrides applied), run
+`split_set.py` to assign each session to an annotation set and copy the files
+into per-set folders. Run this only after cut QC is done, so the sets are built
+from correct debriefing boundaries.
+
+```bash
+python split_set.py
+```
+
+The split is **by session** (one debriefing file is one session), so no
+language from the same session leaks across sets. Sessions are shuffled and
+sliced into three sets:
+
+- `development`: prompt/codebook development (`DEV_SIZE`, default 12)
+- `validation`: locked validation set (`VAL_SIZE`, default 25)
+- `production`: all remaining sessions
+
+Outputs:
+
+```text
+processed_anonymized_csvs/debriefing_set_assignments.csv   # session -> set table
+processed_anonymized_csvs/debriefing_sets/development/      # copied files
+processed_anonymized_csvs/debriefing_sets/validation/
+processed_anonymized_csvs/debriefing_sets/production/
+```
+
+The assignment table has columns `session`, `set`, and `source_file`. The script
+never opens the CSV contents — it only reads file names and copies whole files.
+
+The shuffle uses a **fixed `RANDOM_SEED`** (default 42), so re-running produces
+the exact same split. This is intentional: the validation set is meant to be
+locked, and a fixed seed keeps it stable across reruns. Change `RANDOM_SEED`
+only if you deliberately want to draw a new split — doing so reshuffles every
+set. Set sizes can be changed via `DEV_SIZE` and `VAL_SIZE`; the script errors
+out if there are fewer than `DEV_SIZE + VAL_SIZE` sessions.
 
 ## LLM Annotation Setup
 
