@@ -19,4 +19,14 @@
 .env
 .env.*
 
+# --- Claude Code local settings (personal, not shared) ---
+.claude/settings.local.json
+
+# --- Editor, caches, local-only docs (do not commit) ---
+.vscode/
+__pycache__/
+*.pyc
+CLAUDE.md
+DATA_ACCESS_POLICY.md
+
 
