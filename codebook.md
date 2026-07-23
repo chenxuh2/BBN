@@ -63,6 +63,14 @@ the listed actions, use **Other** (code `other`) and describe it in `other_summa
 - **R3 Transformative Reflection** — commits to doing it differently, or a changed view of self ("next time I'll…", "I realized I was managing my own anxiety")
 - **R4 Critical Reflection** — beyond this encounter, to culture / ethics / the training system (rare)
 
+## valence — is the reflection positive or negative?
+- **positive** — appraises the reflected-on behavior as a strength or good choice ("I'm glad I…", "that worked")
+- **negative** — appraises it as a shortcoming, mistake, regret, or something to change ("I forgot…", "I should have…")
+- **neutral** — pure description, no positive/negative appraisal
+- **mixed** — both a positive and a negative in the same reflection
+
+> Judge the appraisal of the *past* behavior: a constructive "next time I'll…" still counts **negative** (it flags a shortcoming).
+
 ## episode — grouping utterances into one reflection
 Number reflection threads **within each file**: the first reflection episode = `ep1`,
 the next new thread = `ep2`, and so on. Non-reflection rows get no episode.
