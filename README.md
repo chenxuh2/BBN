@@ -10,16 +10,40 @@ folders on your machine.
 
 ## Scripts
 
+Data preparation:
+
 - `anaonymized-processor.py`: splits anonymized full-session CSV files into
   simulation and debriefing CSVs.
 - `split_set.py`: randomly assigns debriefing sessions to the development,
   validation, and production sets and copies the files into per-set folders.
 - `transcript_processor.py`: converts raw transcript text files into cleaned CSV
   files.
+
+Simulation annotation:
+
 - `checklist-annotation-contextual.py`: annotates simulation utterances against
   the Breaking Bad News checklist using an LLM.
-- `reflection-annotation-contextual.py`: annotates debriefing/reflection
-  utterances against the reflection taxonomy using an LLM.
+
+Reflection annotation (debriefing):
+
+- `reflection-annotation-contextual.py`: original per-utterance baseline. Maps
+  each utterance to the reflection taxonomy (goals/actions) with a sliding
+  context window. Kept unchanged for reference.
+- `reflection_common.py`: shared definitions imported by the four experiment
+  configs below — taxonomy, valence and level codebooks, helpers, and the local
+  model call. Change the model for every config in one place via the
+  `OLLAMA_MODEL` env var.
+- `reflection_annotation_summary_core_only.py`: **config 1** — conversation-level,
+  goal+item only (no valence/level).
+- `reflection_annotation_summary_full_one_stage.py`: **config 2** (anchor) —
+  conversation-level, goal+item + valence + level in one prompt.
+- `reflection_annotation_summary_full_two_stage.py`: **config 3** —
+  conversation-level, two prompts: detect goal+item, then label valence+level.
+- `reflection_annotation_contextual_full_one_stage.py`: **config 4** —
+  per-utterance, full (is_reflection + goal/action + valence + level).
+
+See [Reflection Annotation Experiment](#reflection-annotation-experiment) for how
+these four configs relate and how to run the model sweep.
 
 ## Anonymized CSV Processor
 
@@ -233,6 +257,93 @@ python reflection-annotation-contextual.py
 
 Check and edit each script's `INPUT_FOLDER` and `OUTPUT_FOLDER` constants before
 running annotation.
+
+## Reflection Annotation Experiment
+
+The reflection annotation is being evaluated as a small, controlled experiment.
+The goal is to pick the best local setup for downstream use, comparing methods
+against a human-annotated validation set. We deliberately do **not** compare
+utterance-by-utterance (utterance boundary judgments are subjective and noisy).
+Instead we aggregate every method to the **conversation level** and compare the
+**set** of things it found.
+
+### Codebooks
+
+Both are defined once in `reflection_common.py`.
+
+- **Valence** (how the speaker appraises their own handling of an action):
+  `positive` (a strength / good choice), `negative` (a shortcoming / mistake /
+  regret / to change), `neutral` (pure description, no appraisal), `mixed` (both
+  in the same reflection).
+- **Level** (depth of reflection, code the highest that applies): `R0`
+  Description, `R1` Reflective Description (what + why), `R2` Dialogic (questions
+  own reading / weighs an alternative / reads the family's hidden state), `R3`
+  Transformative (commits to change / changed view of self), `R4` Critical
+  (beyond this encounter: culture / ethics / training system, rare).
+
+### The four configs
+
+They vary two independent factors so each comparison isolates one question.
+Config 2 is the anchor.
+
+| Config | Script | Granularity | Prompt |
+| --- | --- | --- | --- |
+| 1 | `reflection_annotation_summary_core_only.py` | conversation | goal+item only |
+| 2 | `reflection_annotation_summary_full_one_stage.py` | conversation | full, one prompt |
+| 3 | `reflection_annotation_summary_full_two_stage.py` | conversation | full, two prompts |
+| 4 | `reflection_annotation_contextual_full_one_stage.py` | per-utterance | full, one prompt |
+
+- **1 vs 2** — does adding valence/level *hurt* goal-action detection? (task load)
+- **2 vs 3** — does splitting detection and labeling improve valence/level?
+  (prompt architecture)
+- **2 vs 4** — whole conversation vs sliding utterance window? (granularity;
+  this is the main method comparison)
+
+Config 1 has no valence/level, so it is scored on goal-action only.
+
+The per-utterance config (4) writes one file per transcript with added columns;
+the summary configs (1-3) write one row per detected (goal, item). For
+comparison, both are aggregated up to per-conversation goal-action sets (the
+comparison script is not written yet).
+
+### Model sweep
+
+We also test which local model is best. On a 12 GB consumer GPU (RTX 5070) the
+largest models that run fully in VRAM at Q4_K_M are ~12-14B, so we hold scale
+roughly constant and vary the training family/lineage. This isolates
+family/instruction-tuning effects and matches a realistic single-GPU deployment.
+
+Candidate models (`CANDIDATE_MODELS` in `reflection_common.py`):
+
+- `qwen2.5:14b` — Alibaba (incumbent baseline; strong structured output)
+- `gemma3:12b` — Google (different pretraining / instruction tuning)
+- `mistral-nemo:12b` — Mistral/NVIDIA (clean JSON / structured output)
+
+Recommended procedure: first fix the anchor config (config 2) and sweep the
+models to pick the best; then run that single model across all four configs for
+the ablation. This avoids a full model x config cross-product.
+
+### How to run
+
+```bash
+ollama pull qwen2.5:14b gemma3:12b mistral-nemo:12b
+pip install pandas ollama tqdm
+```
+
+Point the configs at the validation set and pick a model with env vars (both are
+optional; defaults are in each script / `reflection_common.py`):
+
+```bash
+# sweep models on the anchor config, over the validation set
+export REFLECTION_INPUT=/path/to/debriefing_sets/validation
+for m in qwen2.5:14b gemma3:12b mistral-nemo:12b; do
+  OLLAMA_MODEL=$m python reflection_annotation_summary_full_one_stage.py
+done
+```
+
+Summary configs (1-3) write to `ablation_outputs/`; the per-utterance config (4)
+writes to `ablation_outputs_contextual/`. Output filenames carry the config and
+model name, e.g. `summary_full_one_stage__qwen2.5-14b.csv`.
 
 ## To Do
 
