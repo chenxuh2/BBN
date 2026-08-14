@@ -18,8 +18,23 @@ import json
 import pandas as pd
 import ollama
 
+# ============================================================================
+# >>> FILL IN / CHECK THESE TWO THINGS <<<
+# Used when you click "Run Python File" in VS Code (i.e. no env var set).
+# Env vars REFLECTION_INPUT / OLLAMA_MODEL still override these if present.
+# ----------------------------------------------------------------------------
+# 1) Folder of debrief CSVs to annotate.
+#    Prompt-development / iteration -> DEVELOPMENT set (shown below). Do all tuning here.
+#    Final evaluation               -> switch to the VALIDATION set (keep it locked; run ONCE).
+#    Production                     -> switch to your production set.
+DEFAULT_INPUT = "/mnt/c/Users/stelh/Downloads/processed_anonymized_csvs/debriefing_sets/validation"
+
+# 2) Which local model to run (change this to sweep qwen2.5:14b / gemma3:12b / mistral-nemo:12b).
+DEFAULT_MODEL = "qwen2.5:14b"
+# ============================================================================
+
 # --- MODEL (override for every config via the OLLAMA_MODEL env var) ---
-MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
+MODEL = os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
 
 # Candidate local models for the model-selection sweep.
 # Design: hold scale ~constant (12-14B, the largest tier that runs FULLY inside a
@@ -124,6 +139,50 @@ def correct_goal(goal, item):
     return goal, item
 
 
+# ---------------------------------------------------------------------------
+# CODED taxonomy. The model must pick an item CODE (e.g. "G4.4") instead of
+# free-typing the item text, which it paraphrases/invents. Codes map back to the
+# exact taxonomy strings deterministically, so outputs always use canonical items.
+#   G<goal>.<item>  -> a specific listed action
+#   G<goal>.OTHER   -> fits that goal but none of its listed actions (Scenario A)
+#   OTHER           -> fits none of Goals 1-5 (Scenario B)
+# ---------------------------------------------------------------------------
+GOAL_LIST = [g for g in GOAL_NAMES if g != "Other"]  # Goal 1..5, excludes the "Other" bucket
+
+CODE_TO_GOAL_ITEM = {}
+for _gi, _goal in enumerate(GOAL_LIST, start=1):
+    for _ii, _item in enumerate(TAXONOMY[_goal], start=1):
+        CODE_TO_GOAL_ITEM[f"G{_gi}.{_ii}"] = (_goal, _item)
+    CODE_TO_GOAL_ITEM[f"G{_gi}.OTHER"] = (_goal, "Other")
+CODE_TO_GOAL_ITEM["OTHER"] = ("Other", "Other")
+
+
+def coded_taxonomy_text():
+    """Render the taxonomy with item codes, for embedding in a prompt."""
+    lines = []
+    for _gi, _goal in enumerate(GOAL_LIST, start=1):
+        lines.append(_goal)
+        for _ii, _item in enumerate(TAXONOMY[_goal], start=1):
+            lines.append(f"  G{_gi}.{_ii} = {_item}")
+        lines.append(f"  G{_gi}.OTHER = (reflects this goal but none of the specific actions above)")
+    lines.append("OTHER = (does not fit any of Goals 1-5 at all)")
+    return "\n".join(lines)
+
+
+def resolve_code(code):
+    """Map an item code (e.g. 'G4.4', 'G2.OTHER', 'OTHER') to (goal, item).
+    Tolerates '-' vs '.', spaces, and case. Unknown codes fall back sensibly."""
+    c = str(code).strip().upper().replace(" ", "").replace("-", ".")
+    if c in CODE_TO_GOAL_ITEM:
+        return CODE_TO_GOAL_ITEM[c]
+    m = re.match(r"^G([1-5])\b", c) or re.match(r"^G([1-5])\.", c)
+    if m:
+        gi = int(m.group(1))
+        # valid goal, unrecognized item slot -> treat as that goal's "Other"
+        return (GOAL_LIST[gi - 1], "Other")
+    return ("Other", "Other")
+
+
 def normalize_valence(valence, is_reflection=True):
     v = str(valence).strip().lower()
     m = {x.lower(): x for x in VALENCE_VALUES}
@@ -139,6 +198,38 @@ def normalize_level(level, is_reflection=True):
     if key in m:
         return m[key]
     return "None"
+
+
+# Pure backchannel / filler tokens. An utterance of <=3 words made ENTIRELY of these is
+# treated as non-reflection WITHOUT an LLM call (big speedup for per-utterance annotation).
+# Trade-off: short agreements ("exactly", "I agree") are skipped, so INHERIT-CONTEXT
+# reflections that ride on them are lost - an accepted cost for speed.
+_FILLER = {
+    "yeah", "yea", "yes", "yep", "yup", "no", "nope", "ok", "okay", "k", "kay",
+    "right", "alright", "mm", "mmhm", "mhm", "mmm", "hmm", "hm", "uh", "um", "er",
+    "uhhuh", "huh", "ah", "oh", "so", "well", "sure", "exactly", "agree", "agreed",
+    "true", "correct", "totally", "definitely", "absolutely", "gotcha", "cool",
+    "nice", "wow", "great", "good", "thanks", "thank", "you", "yourself", "same",
+    "of", "course", "for", "i", "me", "too",
+}
+
+
+def looks_like_filler(text):
+    """True if the utterance is empty or a short pure-backchannel (skip the LLM call)."""
+    t = str(text).strip().lower()
+    if not t:
+        return True
+    words = re.findall(r"[a-z']+", t)
+    if not words:
+        return True  # only punctuation / numbers
+    if len(words) > 3:
+        return False
+    return all(w.replace("'", "") in _FILLER for w in words)
+
+
+def input_set_name(input_folder):
+    """Folder name of the input set (e.g. 'validation') to tag/segregate outputs."""
+    return os.path.basename(str(input_folder).rstrip("/\\")) or "default"
 
 
 def find_col(df, *candidates):
@@ -175,16 +266,36 @@ def build_transcript(df, speaker_col, text_col, turn_col=None):
     return "\n".join(lines)
 
 
-def chat_json(prompt, model=None):
-    """Call the local model, force JSON, temperature 0. Returns dict or None."""
-    try:
-        response = ollama.chat(
-            model=model or MODEL,
-            messages=[{'role': 'user', 'content': prompt}],
-            format="json",
-            options={"temperature": 0.0},
-        )
-        return json.loads(response['message']['content'])
-    except Exception as e:
-        print(f"  Model/JSON error: {e}")
-        return None
+# Hard cap on generated tokens. A legit reflections JSON is well under this; the cap stops
+# runaway/looping generation (which otherwise balloons to 100k+ chars and truncates into
+# invalid JSON) from wasting time.
+MAX_OUTPUT_TOKENS = 4096
+
+
+# Temperatures tried in order. Start deterministic (0.0); if the JSON is malformed (usually a
+# repetition loop), retry with a bit of randomness to break the loop. Give up after the last one.
+RETRY_TEMPS = [0.0, 0.4, 0.6]
+
+
+def chat_json(prompt, model=None, label=""):
+    """Call the local model, force JSON. Returns dict or None.
+    Retries with escalating temperature to recover from malformed/looping JSON.
+    keep_alive keeps the model resident in VRAM; num_predict caps runaway output."""
+    tag = f" [{label}]" if label else ""
+    last_err = None
+    for i, temp in enumerate(RETRY_TEMPS):
+        try:
+            response = ollama.chat(
+                model=model or MODEL,
+                messages=[{'role': 'user', 'content': prompt}],
+                format="json",
+                options={"temperature": temp, "num_predict": MAX_OUTPUT_TOKENS},
+                keep_alive="30m",
+            )
+            return json.loads(response['message']['content'])
+        except Exception as e:
+            last_err = e
+            if i + 1 < len(RETRY_TEMPS):
+                print(f"  retry{tag} at temp={RETRY_TEMPS[i + 1]} after: {str(e)[:70]}")
+    print(f"  Model/JSON error{tag} (gave up after {len(RETRY_TEMPS)} tries): {last_err}")
+    return None
