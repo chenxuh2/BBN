@@ -86,8 +86,15 @@ results_self <- med_self_final %>%
     .groups = "drop"                           # Ungroup after calculating
   )
 
-# View the results
-print(results_self)
+# View the results (per-goal summary printed below; raw per-team table not printed)
+# print(results_self)
+
+# --- Per-goal median + N (for RQ1 Fig 1 text) ---
+results_self %>% group_by(Goal) %>%
+  summarise(N = n(),
+            Median = median(Percentage), Q1 = quantile(Percentage, .25),
+            Q3 = quantile(Percentage, .75), Min = min(Percentage), .groups = "drop") %>%
+  print()
 
 gp1 <- ggplot(results_self, aes(x = str_wrap(Goal, width = 15), y = Percentage, fill = Goal)) +
   geom_boxplot(alpha = 0.8, outlier.size = 1.5, lwd = 0.7) + # Thicker lines for readability
@@ -207,6 +214,14 @@ model <- lm(Overall_Rating ~ . - Team.ID, data = regression_data)
 # Print the results!
 summary(model)
 
+# --- Goal-level Spearman correlations with the overall rating (for RQ1 H2 text) ---
+goal_cols <- setdiff(names(regression_data), c("Team.ID", "Overall_Rating"))
+purrr::map_df(goal_cols, function(g) {
+  t <- cor.test(regression_data[[g]], regression_data$Overall_Rating,
+                method = "spearman", exact = FALSE)
+  data.frame(Goal = g, rho = unname(t$estimate), p = t$p.value)
+}) %>% mutate(p_fdr = p.adjust(p, "fdr")) %>% print()
+
 ##-----------------------------------------##
 # A quick check for the correlation
 ##-----------------------------------------##
@@ -279,7 +294,6 @@ item_correlations <- map_df(item_names, function(item_col) {
   overall_scores <- analysis_df$Overall_Rating
   
   sd_val <- sd(item_scores, na.rm = TRUE)
-  print(sd_val)
   
   # Check if the item actually has variance
   if (!is.na(sd_val) && sd_val > 0) {
@@ -355,6 +369,12 @@ bias_stats <- bias_df %>%
 
 # 5. Print the results
 print(bias_stats)
+
+# --- Sample sizes (N) for the RQ1 statistics ---
+cat("regression N =", nrow(regression_data), "\n")
+cat("bias N (teams) =", dplyr::n_distinct(bias_df$`Team ID`), "\n")
+cat("self goal-perf N (teams) =", dplyr::n_distinct(results_self$`Team ID`), "\n")
+cat("item-level tests =", nrow(final_item_results), "\n")
 
 ##-----------------------------------------##
 ## Check if graded goals predict performance 
@@ -519,94 +539,9 @@ ggsave(
 )
 
 cat("Successfully saved 'Item_Level_Bias_Unified.png' to your working directory!\n")
-##-----------------------------------------##
-# Lasso regression to check the items 
-##-----------------------------------------##
-
-
-# Step 1: Clean the Overall dataframe
-# We only want the ID and the Score (renamed to avoid confusion)
-overall_clean <- overall %>%
-  select(`Team ID`, Overall_Score = Score) %>% 
-  # Note: If 'overall' has multiple questions, filter for the specific one you want first:
-  # filter(`Question Text` == "Global Rating") %>%
-  distinct() # Removes duplicates if any
-
-# Step 2: Merge it into your main dataframe
-analysis_df <- df_clean %>%
-  left_join(overall_clean, by = "Team ID")
-
-# Now every row in 'analysis_df' has the specific item score AND the team's overall score
-head(analysis_df)
-
-library(janitor) # Helps clean column names
-
-# 1. Prepare Data (Convert to Numeric FIRST)
-lasso_data <- analysis_df %>%
-  # Select columns
-  select(`Team ID`, `Question Text`, Score, Overall_Score) %>%
-  
-  # --- THE FIX IS HERE ---
-  # Force Score to be a number. 
-  # If you have text like "N/A" or "-", this turns them into NA (which we fix later)
-  mutate(Score = as.numeric(Score)) %>%
-  
-  # Pivot to Wide
-  pivot_wider(
-    names_from = `Question Text`, 
-    values_from = Score,
-    values_fill = 0  # Now this works because 0 matches the numeric column
-  ) %>%
-  
-  # Clean names for safe math
-  clean_names() %>%
-  
-  # Remove rows missing the outcome variable
-  drop_na(overall_score)
-
-library(glmnet)
-
-# 1. Create the Predictor Matrix (X)
-# Exclude ID and Outcome columns. 
-# data.matrix() automatically handles the conversion to a numeric matrix.
-x <- data.matrix(lasso_data %>% select(-team_id, -overall_score))
-
-# 2. Create the Outcome Vector (Y)
-y <- lasso_data$overall_score
-y <- as.numeric(as.character(y))
-set.seed(123) # For reproducible results
-
-# Run Lasso (alpha = 1) with Cross-Validation
-cv_fit <- cv.glmnet(x, y, alpha = 1)
-
-# Plot the error curve
-plot(cv_fit)
-
-# 1. Get coefficients for the "1 Standard Error" model (Conservative/Stricter)
-coef_obj <- coef(cv_fit, s = "lambda.1se") 
-coef_obj <- coef(cv_fit, s = "lambda.min")
-# 2. Turn into a clean table of survivors
-active_items <- data.frame(
-  Item = rownames(coef_obj), 
-  Coefficient = as.numeric(coef_obj)
-) %>%
-  filter(Coefficient != 0) %>%       # Remove the deleted items
-  filter(Item != "(Intercept)") %>%  # Remove intercept
-  arrange(desc(abs(Coefficient)))    # Sort by impact
-
-# View the critical checklist items
-print(active_items)
-
-# 1. Get the names of the 9 items from your active_items list
-selected_vars <- active_items$Item
-
-# 2. Create the formula using the CORRECT column name (likely lowercase)
-# CHANGE "Overall_Score" to "overall_score"
-formula_str <- paste("overall_score ~", paste(selected_vars, collapse = " + "))
-
-# 3. Run the model again
-final_model <- lm(as.formula(formula_str), data = lasso_data)
-summary(final_model)
+# (Lasso item-selection analysis removed: it was broken (referenced undefined 'overall'/'df_clean')
+#  and is not needed - the regression and FDR-corrected item correlations above already show that
+#  checklist items do not explain the overall rating.)
 
 # Look at distribution
 grader_overall <- med_graded_final %>%

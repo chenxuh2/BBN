@@ -16,7 +16,7 @@ from tqdm import tqdm
 import reflection_common as rc
 
 INPUT_FOLDER = os.environ.get("REFLECTION_INPUT", rc.DEFAULT_INPUT)
-OUTPUT_FOLDER = "ablation_outputs_contextual"
+OUTPUT_FOLDER = "production_outputs_contextual"
 CONFIG_NAME = "contextual_full_one_stage"
 
 # Contextual is per-utterance = heavy, so run ONE model per invocation (set OLLAMA_MODEL to pick it).
@@ -116,6 +116,18 @@ def run():
     files = glob.glob(os.path.join(INPUT_FOLDER, "*_DEBRIEF*")) \
         or sorted(glob.glob(os.path.join(INPUT_FOLDER, "*.csv"))
                   + glob.glob(os.path.join(INPUT_FOLDER, "*.tsv")))
+
+    # Optional: restrict to specific sessions by leading session code, e.g.
+    #   ONLY_SESSIONS=dbch18,jjfw17,...  (great for running just the 7 triple-coded)
+    only = os.environ.get("ONLY_SESSIONS", "").strip()
+    if only:
+        keep = {s.strip().lower() for s in only.split(",") if s.strip()}
+        def _sess(fp):
+            m = re.match(r"[a-z]+\d+", os.path.basename(fp).lower())
+            return m.group(0) if m else ""
+        files = [f for f in files if _sess(f) in keep]
+        print(f"  [ONLY_SESSIONS] restricted to {len(files)} files: {sorted(keep)}")
+
     out_dir = os.path.join(OUTPUT_FOLDER, rc.input_set_name(INPUT_FOLDER))
     os.makedirs(out_dir, exist_ok=True)
     safe_model = MODEL.replace(":", "-").replace("/", "-")

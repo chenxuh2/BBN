@@ -1,0 +1,197 @@
+% ============================================================================
+%  APPENDIX: Annotation Codebook and LLM Annotation Prompts
+%  Requires: \usepackage{listings} (for the prompt block) and booktabs.
+%  If you cannot use listings, replace the lstlisting block with verbatim.
+% ============================================================================
+\section{Annotation Codebook and LLM Annotation Prompts}
+\label{app:codebook}
+
+This appendix documents the codebook shared by the human annotators and the local
+LLM annotator, and the exact prompt used for the per-utterance annotation. Human
+coders and the model applied the \emph{same} definitions (Tables~\ref{tab:taxonomy}--\ref{tab:levels}).
+
+\subsection{Goal--Action Taxonomy}
+\label{app:taxonomy}
+
+Each reflective utterance is mapped to one or more item \emph{codes} rather than free
+text. A code \texttt{G$g$.$i$} denotes a specific listed action; \texttt{G$g$.OTHER}
+denotes an utterance that reflects goal $g$ but none of its listed actions; and
+\texttt{OTHER} denotes a reflection that fits none of Goals~1--5. Codes map back to the
+canonical action strings deterministically, so all outputs use the exact taxonomy wording.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Goal--action taxonomy with item codes.}
+\label{tab:taxonomy}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Code} & \textbf{Action} \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Goal 1: Establish a Supportive and Professional Environment}} \\
+G1.1 & Addressed family member by name. \\
+G1.2 & Introduced him/herself by name and role. \\
+G1.3 & Clearly stated the name of the deceased family member. \\
+G1.4 & Sat down. (Body language / eye contact) \\
+G1.5 & Displayed professional attire / presence. \\
+G1.6 & Handled interruptions in non-disruptive manner. \\
+G1.7 & Conducted interaction in organized manner. \\
+\addlinespace
+\multicolumn{2}{@{}l}{\textit{Goal 2: Assess and Align Expectations}} \\
+G2.1 & Ensured all important survivors were present. \\
+G2.2 & Determined knowledge survivors possessed. \\
+G2.3 & Involved me when discussing reason for visit. \\
+G2.4 & Elicited patient perspective of health situation. \\
+\addlinespace
+\multicolumn{2}{@{}l}{\textit{Goal 3: Deliver the News}} \\
+G3.1 & Provided appropriate opening statement (warning shot). \\
+G3.2 & Accurately / succinctly chronicled events leading to death. \\
+G3.3 & Used phrase `dead' or `died' (avoided euphemisms). \\
+G3.4 & Avoided jargon or explained terms. \\
+\addlinespace
+\multicolumn{2}{@{}l}{\textit{Goal 4: Manage the Emotional Response}} \\
+G4.1 & Paused to allow family to assimilate information. \\
+G4.2 & Responded to cues with appropriate touch. \\
+G4.3 & Emotional response did not interfere with communication. \\
+G4.4 & Legitimized my emotions. \\
+G4.5 & Reinforced positive behaviors. \\
+\addlinespace
+\multicolumn{2}{@{}l}{\textit{Goal 5: Ensure Understanding and Facilitate Closure}} \\
+G5.1 & Offered viewing of the deceased. \\
+G5.2 & Established availability to answer questions. \\
+G5.3 & Encouraged questions / concerns. \\
+G5.4 & Summarized the interview. \\
+G5.5 & Checked for accuracy during interview. \\
+G5.6 & Reviewed next step(s). \\
+G5.7 & Verified patient's understanding. \\
+\addlinespace
+\multicolumn{2}{@{}l}{\textit{Fallback codes}} \\
+G$g$.OTHER & Reflects goal $g$ but none of its listed actions. \\
+OTHER & Does not fit any of Goals 1--5. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Reflection Valence}
+\label{app:valence}
+
+Each reflection is assigned one valence, capturing how the speaker appraises the behavior.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Valence codes.}
+\label{tab:valence}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Value} & \textbf{Definition} \\
+\midrule
+positive & Appraises the behavior as a strength / good choice. \\
+negative & Appraises it as a shortcoming / mistake / regret / \\
+         & something to change. \\
+neutral  & Pure description, no positive or negative appraisal. \\
+mixed    & Both a positive \emph{and} a negative in the same reflection. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Reflective Depth}
+\label{app:levels}
+
+Depth is coded on a five-level ordinal scale; coders assign the \emph{highest} level that applies.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Reflective-depth levels (code the highest that applies).}
+\label{tab:levels}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Level} & \textbf{Definition} \\
+\midrule
+R0 Description & Only what happened, or a bare ``I did well'', with no reason. \\
+R1 Reflective Description & What + why (gives a reason), but not questioned. \\
+R2 Dialogic & Questions own reading / weighs an alternative / \\
+            & reads family's hidden state. \\
+R3 Transformative & Commits to change or a changed view of self \\
+                  & (``next time I'll\ldots''). \\
+R4 Critical & Beyond this encounter: culture / ethics / \\
+            & training system (rare). \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{LLM Annotation Prompt}
+\label{app:prompt}
+
+The corpus was annotated per utterance with a local model (mistral-nemo:12b, Q4\_K\_M,
+temperature~0). Each target utterance is judged within a $\pm2$-utterance sliding context
+window, and the four decisions (\textit{is-reflection} $\rightarrow$ \textit{goal/action code}
+$\rightarrow$ \textit{valence} $\rightarrow$ \textit{depth}) are made in a single prompt that
+returns strict JSON. Pure backchannels / filler ($\leq 3$ words) are filtered before the model
+call. The template is shown below; \texttt{\{...\}} placeholders are filled at run time (the
+taxonomy from Table~\ref{tab:taxonomy}, valence from Table~\ref{tab:valence}, and depth from
+Table~\ref{tab:levels} are injected verbatim).
+
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize,breaklines=true,frame=single]
+You are an expert qualitative researcher analyzing a medical debriefing
+transcript after a BREAKING BAD NEWS simulation. Speakers are now
+reflecting on how it went.
+
+TAXONOMY (map to an item CODE below; do NOT invent or paraphrase item text):
+{goal-action taxonomy, Table 1}
+
+CONVERSATION CONTEXT:
+[2 ago] {role}: "{utterance}"
+[1 ago] {role}: "{utterance}"
+---
+[TARGET UTTERANCE] {role}: "{utterance}"
+---
+[next] {role}: "{utterance}"
+
+RULES:
+1. ONLY REFLECTIONS: annotate the TARGET only when the speaker
+   evaluates/recalls/reflects on a clinical action from the simulation.
+   Otherwise set "is_reflection" false and return empty lists.
+2. IGNORE SMALL TALK: filler ("yeah", "okay"), logistics, bare
+   acknowledgements -> is_reflection false.
+3. INHERIT CONTEXT: a generic agreement ("exactly") right after a
+   specific reflection inherits it.
+4. MAP TO ITEM CODES: first reason which GOAL the utterance really shows
+   (e.g. silence/pauses and touch are emotional-response actions, NOT
+   setup or assessment), THEN put the taxonomy code(s) in
+   "reflected_item_codes".
+   - Each entry MUST be one of the codes in the taxonomy above (codes
+     span G1.1 through G5.x, plus G#.OTHER and OTHER). Do NOT default to
+     a goal's first item; pick the item that matches.
+   - Do NOT write item text and do NOT invent new codes.
+   - CONSISTENCY: each code must be supported by the words shown in the
+     CONTEXT WINDOW (the target plus the surrounding utterances). If
+     nothing in that window clearly expresses the action, pick a
+     different code or set is_reflection false.
+   - Usually one code; use several only if the utterance clearly
+     reflects on several actions.
+5. When an OTHER code (G#.OTHER or OTHER) is used, write a 3-7 word
+   "other_summary".
+6. "valence" = ONE of ["positive","negative","neutral","mixed"] (or
+   "None" if not a reflection):
+{valence definitions, Table 2}
+7. "level" = ONE of ["R0","R1","R2","R3","R4"] (CODE THE HIGHEST THAT
+   APPLIES; "None" if not a reflection):
+{depth definitions, Table 3}
+
+OUTPUT (Strict JSON):
+{
+    "is_reflection": true or false,
+    "reason": "which goal the utterance shows and why (decide this
+               BEFORE the codes)",
+    "reflected_item_codes": ["<best code(s) from the taxonomy above>"],
+    "valence": "positive|negative|neutral|mixed|None",
+    "level": "R0|R1|R2|R3|R4|None",
+    "other_summary": "short summary if Other else empty"
+}
+\end{lstlisting}
+
+The returned codes are mapped back to canonical (goal, action) pairs deterministically;
+an utterance that is not a reflection, or whose code list is empty, is recorded as
+non-reflective with null valence and depth.

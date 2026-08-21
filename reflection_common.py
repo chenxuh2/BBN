@@ -27,10 +27,10 @@ import ollama
 #    Prompt-development / iteration -> DEVELOPMENT set (shown below). Do all tuning here.
 #    Final evaluation               -> switch to the VALIDATION set (keep it locked; run ONCE).
 #    Production                     -> switch to your production set.
-DEFAULT_INPUT = "/mnt/c/Users/stelh/Downloads/processed_anonymized_csvs/debriefing_sets/validation"
+DEFAULT_INPUT = "/mnt/c/Users/stelh/Downloads/processed_anonymized_csvs/debriefing_sets/production"
 
 # 2) Which local model to run (change this to sweep qwen2.5:14b / gemma3:12b / mistral-nemo:12b).
-DEFAULT_MODEL = "qwen2.5:14b"
+DEFAULT_MODEL = "mistral-nemo:12b"
 # ============================================================================
 
 # --- MODEL (override for every config via the OLLAMA_MODEL env var) ---
@@ -266,15 +266,17 @@ def build_transcript(df, speaker_col, text_col, turn_col=None):
     return "\n".join(lines)
 
 
-# Hard cap on generated tokens. A legit reflections JSON is well under this; the cap stops
-# runaway/looping generation (which otherwise balloons to 100k+ chars and truncates into
-# invalid JSON) from wasting time.
-MAX_OUTPUT_TOKENS = 4096
+# Hard cap on generated tokens (env-overridable). A legit reflections JSON is well under this;
+# the cap stops runaway/looping generation from wasting time. Lower it for per-utterance runs.
+MAX_OUTPUT_TOKENS = int(os.environ.get("OLLAMA_NUM_PREDICT", "4096"))
 
+# Context window. None -> ollama default. Set OLLAMA_NUM_CTX=2048 for per-utterance (contextual)
+# runs: the input is small, and a smaller KV cache helps a 10 GB model fit fully in a 12 GB GPU.
+NUM_CTX = os.environ.get("OLLAMA_NUM_CTX")
 
-# Temperatures tried in order. Start deterministic (0.0); if the JSON is malformed (usually a
-# repetition loop), retry with a bit of randomness to break the loop. Give up after the last one.
-RETRY_TEMPS = [0.0, 0.4, 0.6]
+# Temperatures tried in order (deterministic first; a bit of randomness on retry breaks JSON loops).
+# OLLAMA_RETRIES caps how many attempts (e.g. 2 = [0.0, 0.4]); default 3.
+RETRY_TEMPS = [0.0, 0.4, 0.6][: max(1, int(os.environ.get("OLLAMA_RETRIES", "3")))]
 
 
 def chat_json(prompt, model=None, label=""):
@@ -283,13 +285,17 @@ def chat_json(prompt, model=None, label=""):
     keep_alive keeps the model resident in VRAM; num_predict caps runaway output."""
     tag = f" [{label}]" if label else ""
     last_err = None
+    opts = {"temperature": 0.0, "num_predict": MAX_OUTPUT_TOKENS}
+    if NUM_CTX:
+        opts["num_ctx"] = int(NUM_CTX)
     for i, temp in enumerate(RETRY_TEMPS):
         try:
+            opts["temperature"] = temp
             response = ollama.chat(
                 model=model or MODEL,
                 messages=[{'role': 'user', 'content': prompt}],
                 format="json",
-                options={"temperature": temp, "num_predict": MAX_OUTPUT_TOKENS},
+                options=opts,
                 keep_alive="30m",
             )
             return json.loads(response['message']['content'])
